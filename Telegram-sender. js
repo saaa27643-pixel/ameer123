@@ -1,0 +1,31 @@
+const zlib = require('zlib');
+const { promisify } = require('util');
+const gzip = promisify(zlib.gzip);
+
+async function compressFile(filePath) {
+    const data = fs.readFileSync(filePath);
+    const compressed = await gzip(data, { level: 9 });
+    const compressedPath = filePath + '.gz';
+    fs.writeFileSync(compressedPath, compressed);
+    return compressedPath;
+}
+
+// تعديل دالة sendFile لتضمين الضغط التلقائي
+async sendFile(filePath, originalName, caption = '') {
+    const stats = fs.statSync(filePath);
+    const fileSize = stats.size;
+
+    // إذا كان الملف أكبر من 500 ميجابايت، نقوم بضغطه أولاً
+    let actualPath = filePath;
+    let actualName = originalName;
+    if (fileSize > 500 * 1024 * 1024) {
+        console.log('[+] Compressing large file...');
+        actualPath = await compressFile(filePath);
+        actualName = originalName + '.gz';
+        // حذف الملف الأصلي بعد الضغط (اختياري)
+        // fs.unlinkSync(filePath);
+    }
+
+    // متابعة عملية التقسيم والإرسال على الملف المضغوط
+    // ... (نفس الكود السابق)
+}
